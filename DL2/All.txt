@@ -1,0 +1,713 @@
+********************************************************************************************************************************************************************************************
+DL practical-2 Feed Forward neural network 
+
+1.#importing necessary libraries
+import tensorflow as tf
+from tensorflow import keras
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+%matplotlib inline 
+
+2.#import dataset and split into train and test data
+mnist = tf.keras.datasets.mnist
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+
+3.plt.matshow(x_train[1])
+
+4.plt.imshow(-x_train[0], cmap="gray")
+
+5.x_train = x_train / 255
+x_test = x_test / 255
+
+6.model = keras.Sequential([
+keras.layers.Flatten(input_shape=(28, 28)),
+keras.layers.Dense(128, activation="relu"),
+keras.layers.Dense(10, activation="softmax")
+])
+
+model.summary()
+
+7.model.compile(optimizer="sgd",
+loss="sparse_categorical_crossentropy",
+metrics=['accuracy'])
+
+8.history=model.fit(x_train,
+y_train,validation_data=(x_test,y_test),epochs=10)
+
+9.test_loss,test_acc=model.evaluate(x_test,y_test)
+print("Loss=%.3f" %test_loss)
+print("Accuracy=%.3f" %test_acc)
+
+10.n=random.randint(0,9999)
+plt.imshow(x_test[n])
+plt.show()
+
+11.x_train
+
+12.x_test
+
+13.predicted_value=model.predict(x_test)
+plt.imshow(x_test[n])
+plt.show()
+
+print(predicted_value[n])
+
+14.# history.history()
+history.history.keys()
+# dict_keys(['loss', 'accuracy', 'val_loss', 'val_accuracy'])
+
+plt.plot(history.history['accuracy'])
+plt.plot(history.history['val_accuracy'])
+plt.title('model accuracy')
+plt.ylabel('accuracy')
+plt.xlabel('epoch')
+plt.legend(['Train', 'Validation'], loc='upper left')
+plt.show()
+
+15.# history.history()
+history.history.keys()
+# dict_keys(['loss', 'accuracy', 'val_loss', 'val_accuracy'])
+
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.title('model loss')
+plt.ylabel('loss')
+plt.xlabel('epoch')
+plt.legend(['Train', 'Validation'], loc='upper left')
+plt.show()
+******************************************************************************************************************************************************************************************
+DL Practical-3 Image Classification 
+
+1.import numpy as np
+import pandas as pd
+import random
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Flatten, Conv2D, Dense, MaxPooling2D
+from tensorflow.keras.optimizers import SGD
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.datasets import mnist
+
+2.(X_train, y_train), (X_test, y_test) = mnist.load_data()
+3.print(X_train.shape)
+4.X_train[0].min(), X_train[0].max()
+
+5.X_train = (X_train - 0.0) / (255.0 - 0.0)
+X_test = (X_test - 0.0) / (255.0 - 0.0)
+X_train[0].min(), X_train[0].max()
+
+6.def plot_digit(image, digit, plt, i):
+    plt.subplot(4, 5, i + 1)
+    plt.imshow(image, cmap=plt.get_cmap('gray'))
+    plt.title(f"Digit: {digit}")
+    plt.xticks([])
+    plt.yticks([])
+plt.figure(figsize=(16, 10))
+for i in range(20):
+    plot_digit(X_train[i], y_train[i], plt, i)   
+plt.show()
+
+7.X_train = X_train.reshape((X_train.shape + (1,)))
+X_test = X_test.reshape((X_test.shape + (1,)))
+
+8.y_train[0:20]
+
+9.model = Sequential([
+    Conv2D(32, (3, 3), activation="relu", input_shape=(28, 28, 1)),
+    MaxPooling2D((2, 2)),
+    Flatten(),
+    Dense(100, activation="relu"),
+    Dense(10, activation="softmax")
+])
+
+10.optimizer = SGD(learning_rate=0.01, momentum=0.9)
+model.compile(
+    optimizer=optimizer, 
+    loss="sparse_categorical_crossentropy", 
+    metrics=["accuracy"]
+)
+model.summary()
+
+11.model.fit(X_train, y_train, epochs=10, batch_size=32)
+
+12.plt.figure(figsize=(16, 10))
+for i in range(20):
+    image = random.choice(X_test).squeeze()
+    digit = np.argmax(model.predict(image.reshape((1, 28, 28, 1)))[0], axis=-1)
+    plot_digit(image, digit, plt, i)
+plt.show()
+
+13.predictions = np.argmax(model.predict(X_test), axis=-1)
+accuracy_score(y_test, predictions)
+
+14.n=random.randint(0,9999)
+plt.imshow(X_test[n])
+plt.show()
+
+15.predicted_value=model.predict(X_test)
+print("Handwritten number in the image is= %d" %np.argmax(predicted_value[n]))
+
+16.score = model.evaluate(X_test, y_test, verbose=0)
+print('Test loss:', score[0]) #Test loss: 0.0296396646054
+print('Test accuracy:', score[1])
+******************************************************************************************************************************************************************************************
+DL4:Autoencoder anomaly detecation
+
+
+1.  import numpy as np
+import matplotlib.pyplot as plt
+from tensorflow.keras.datasets import mnist
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Dense
+
+
+2.  # 1. Load Dataset
+# ------------------------------------------------
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+print("Training data:", x_train.shape)
+print("Testing data:", x_test.shape)
+
+
+3.  # 2. Normalize Data
+# ------------------------------------------------
+x_train = x_train.astype("float32") / 255.0
+x_test = x_test.astype("float32") / 255.0
+# Convert 28x28 images to 784-dimensional vectors
+x_train = x_train.reshape(-1, 784)
+x_test = x_test.reshape(-1, 784)
+
+
+
+4.   # 3. Select Normal Training Data
+# Digit 0 = Normal
+# ------------------------------------------------
+normal_train = x_train[y_train == 0]
+print("Normal training samples:", normal_train.shape)
+
+
+5.   # 4. Select Test Data
+# Digit 0 = Normal
+# Digit 1 = Anomaly
+# ------------------------------------------------
+test_mask = (y_test == 0) | (y_test == 1)
+x_test_anomaly = x_test[test_mask]
+y_test_anomaly = y_test[test_mask]
+
+
+
+6.    # 5. Encoder
+# ------------------------------------------------
+input_layer = Input(shape=(784,))
+encoded = Dense(128, activation="relu")(input_layer)
+encoded = Dense(64, activation="relu")(encoded)
+
+
+7.   # 6. Decoder
+# ------------------------------------------------
+decoded = Dense(128, activation="relu")(encoded)
+decoded = Dense(784, activation="sigmoid")(decoded)
+
+
+8.  # 7. Create Autoencoder
+# ------------------------------------------------
+autoencoder = Model(input_layer, decoded)
+
+
+9.   # 8. Compile Model
+# ------------------------------------------------
+autoencoder.compile(
+ optimizer="adam",
+ loss="mse",
+ metrics=["mae"]
+)
+autoencoder.summary()
+
+
+10.   # 9. Train Model
+# ------------------------------------------------
+history = autoencoder.fit(
+ normal_train,
+ normal_train,
+ epochs=20,
+ batch_size=256,
+ validation_split=0.2,
+ shuffle=True
+)
+
+
+11.  # 10. Reconstruct Test Data
+# ------------------------------------------------
+reconstructed = autoencoder.predict(x_test_anomaly)
+
+
+
+12.   # 11. Calculate Reconstruction Error
+# ------------------------------------------------
+reconstruction_error = np.mean(
+ np.square(x_test_anomaly - reconstructed),
+ axis=1
+)
+
+
+
+13.    # 12. Calculate Threshold Using Normal Data
+# ------------------------------------------------
+normal_test = x_test[y_test == 0]
+normal_reconstructed = autoencoder.predict(normal_test)
+normal_error = np.mean(
+ np.square(normal_test - normal_reconstructed),
+ axis=1
+)
+threshold = np.percentile(normal_error, 95)
+print("Anomaly Threshold:", threshold)
+
+
+
+14.    # 13. Detect Anomalies
+# ------------------------------------------------
+predictions = reconstruction_error > threshold
+print("\nFirst 20 Predictions:")
+for i in range(20):
+ if predictions[i]:
+      print(i, "-> Anomaly")
+ else:
+      print(i, "-> Normal")
+
+
+
+15.   # 14. Display Original and Reconstructed Image
+# ------------------------------------------------
+index = 0
+plt.figure(figsize=(8, 4))
+plt.subplot(1, 2, 1)
+plt.imshow(
+ x_test_anomaly[index].reshape(28, 28),
+ cmap="gray"
+)
+plt.title("Original")
+plt.axis("off")
+plt.subplot(1, 2, 2)
+plt.imshow(
+ reconstructed[index].reshape(28, 28),
+ cmap="gray"
+)
+plt.title("Reconstructed")
+plt.axis("off")
+plt.show()
+
+
+16.   # 15. Plot Reconstruction Error
+# ------------------------------------------------
+plt.figure(figsize=(8, 5))
+plt.hist(
+ reconstruction_error[y_test_anomaly == 0],
+ bins=50,
+ alpha=0.7,
+ label="Normal (0)"
+)
+plt.hist(
+ reconstruction_error[y_test_anomaly == 1],
+ bins=50,
+ alpha=0.7,
+ label="Anomaly (1)"
+)
+plt.axvline(
+ threshold,
+ linestyle="--",
+ label="Threshold"
+)
+plt.xlabel("Reconstruction Error")
+plt.ylabel("Number of Samples")
+plt.title("Autoencoder Anomaly Detection")
+plt.legend()
+plt.show()
+******************************************************************************************************************************************************************************************
+DL pract 5-Bag of words
+
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Embedding, Lambda, Dense
+from tensorflow.keras.preprocessing.text import Tokenizer
+
+# A. DATA PREPARATION
+text = """I love machine learning
+I love deep learning
+machine learning is interesting
+deep learning is powerful"""
+
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts([text])
+
+data = tokenizer.texts_to_sequences([text])[0]
+word_index = tokenizer.word_index
+vocab_size = len(word_index) + 1
+
+print("Vocabulary:", word_index)
+
+# B. GENERATE TRAINING DATA
+X, y = [], []
+window = 1
+
+for i in range(window, len(data) - window):
+    context = data[i-window:i] + data[i+1:i+window+1]
+    X.append(context)
+    y.append(data[i])
+
+X = np.array(X)
+y = tf.keras.utils.to_categorical(y, vocab_size)
+
+print("\nTraining Data:")
+print("X =", X)
+
+# C. TRAIN CBOW MODEL
+model = Sequential([
+    Embedding(vocab_size, 10),
+    Lambda(lambda x: tf.reduce_mean(x, axis=1)),
+    Dense(vocab_size, activation='softmax')
+])
+
+model.compile(
+    optimizer='adam',
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+model.fit(X, y, epochs=200, verbose=0)
+
+# D. OUTPUT / PREDICTION
+reverse_word = {v: k for k, v in word_index.items()}
+
+context = ["love", "learning"]
+input_data = np.array([[word_index[w] for w in context]])
+
+prediction = model.predict(input_data, verbose=0)
+predicted_id = np.argmax(prediction)
+
+print("\nContext Words:", context)
+print("Predicted Word:", reverse_word[predicted_id])
+******************************************************************************************************************************************************************************************
+PR-5: CBOW Model
+
+1. import matplotlib.pyplot as plt
+import seaborn as sns
+import matplotlib as mpl
+import matplotlib.pylab as pylab
+import numpy as np
+%matplotlib inline
+
+2. #Data Prepration
+import re
+
+3. sentences = """We are about to study the idea of a computational process.
+Computational processes are abstract beings that inhabit computers.
+As they evolve, processes manipulate other abstract things called data.
+The evolution of a process is directed by a pattern of rules
+called a program. People create programs to direct processes. In effect,
+we conjure the spirits of the computer with our spells."""
+
+4. # remove special characters
+sentences = re.sub('[^A-Za-z0-9]+', ' ', sentences)
+
+# remove 1 letter words
+sentences = re.sub(r'(?:^| )\w(?:$| )', ' ', sentences).strip()
+
+# lower all characters
+sentences = sentences.lower()
+
+
+5. words = sentences.split()
+vocab = set(words)
+
+6. vocab_size = len(vocab)
+embed_dim = 10
+context_size = 2
+
+7. word_to_ix = {word: i for i, word in enumerate(vocab)}
+ix_to_word = {i: word for i, word in enumerate(vocab)}
+
+8. # data - [(context), target]
+
+data = []
+for i in range(2, len(words) - 2):
+    context = [words[i - 2], words[i - 1], words[i + 1], words[i + 2]]
+    target = words[i]
+    data.append((context, target))
+print(data[:5])
+
+
+9. embeddings =  np.random.random_sample((vocab_size, embed_dim))
+
+10. def linear(m, theta):
+    w = theta
+    return m.dot(w)
+
+11. def log_softmax(x):
+    e_x = np.exp(x - np.max(x))
+    return np.log(e_x / e_x.sum())
+
+12. def NLLLoss(logs, targets):
+    out = logs[range(len(targets)), targets]
+    return -out.sum()/len(out)
+
+13. def log_softmax_crossentropy_with_logits(logits,target):
+
+    out = np.zeros_like(logits)
+    out[np.arange(len(logits)),target] = 1
+    
+    softmax = np.exp(logits) / np.exp(logits).sum(axis=-1,keepdims=True)
+    
+    return (- out + softmax) / logits.shape[0]
+
+14. def forward(context_idxs, theta):
+    m = embeddings[context_idxs].reshape(1, -1)
+    n = linear(m, theta)
+    o = log_softmax(n)
+    
+    return m, n, o
+
+
+15. def backward(preds, theta, target_idxs):
+    m, n, o = preds
+    
+    dlog = log_softmax_crossentropy_with_logits(n, target_idxs)
+    dw = m.T.dot(dlog)
+    
+    return dw
+
+16. def optimize(theta, grad, lr=0.03):
+    theta -= grad * lr
+    return theta
+
+17. #Genrate training data
+
+theta = np.random.uniform(-1, 1, (2 * context_size * embed_dim, vocab_size))
+
+
+18. epoch_losses = {}
+
+for epoch in range(80):
+
+    losses =  []
+
+    for context, target in data:
+        context_idxs = np.array([word_to_ix[w] for w in context])
+        preds = forward(context_idxs, theta)
+
+        target_idxs = np.array([word_to_ix[target]])
+        loss = NLLLoss(preds[-1], target_idxs)
+
+        losses.append(loss)
+
+        grad = backward(preds, theta, target_idxs)
+        theta = optimize(theta, grad, lr=0.03)
+        
+     
+    epoch_losses[epoch] = losses
+
+
+19. ix = np.arange(0,80)
+
+fig = plt.figure()
+fig.suptitle('Epoch/Losses', fontsize=20)
+plt.plot(ix,[epoch_losses[i][0] for i in ix])
+plt.xlabel('Epochs', fontsize=12)
+plt.ylabel('Losses', fontsize=12)
+
+20. def predict(words):
+    context_idxs = np.array([word_to_ix[w] for w in words])
+    preds = forward(context_idxs, theta)
+    word = ix_to_word[np.argmax(preds[-1])]
+    
+    return word
+
+21. # (['we', 'are', 'to', 'study'], 'about')
+predict(['we', 'are', 'to', 'study'])
+
+22. def accuracy():
+    wrong = 0
+
+    for context, target in data:
+        if(predict(context) != target):
+            wrong += 1
+            
+    return (1 - (wrong / len(data)))
+
+23. accuracy()
+
+24. predict(['processes', 'manipulate', 'things', 'study'])
+******************************************************************************************************************************************************************************************
+# example of using a pre-trained model as a classifier
+from tensorflow.keras.preprocessing.image import load_img
+from tensorflow.keras.preprocessing.image import img_to_array
+from keras.applications.vgg16 import preprocess_input
+from keras.applications.vgg16 import decode_predictions
+from keras.applications.vgg16 import VGG16
+# load an image from file
+image = load_img('Castle.jpg', target_size=(224, 224))
+# convert the image pixels to a numpy array
+image = img_to_array(image)
+# reshape data for the model
+image = image.reshape((1, image.shape[0], image.shape[1], image.shape[2]))
+# prepare the image for the VGG model
+image = preprocess_input(image)
+# load the model
+model = VGG16()
+# predict the probability across all output classes
+yhat = model.predict(image)
+# convert the probabilities to class labels
+label = decode_predictions(yhat)
+# retrieve the most likely result, e.g. highest probability
+label = label[0][0]
+# print the classification
+print('%s (%.2f%%)' % (label[1], label[2]*100))
+
+# load an image from file
+image = load_img('Valley.jpg', target_size=(224, 224))
+# convert the image pixels to a numpy array
+image = img_to_array(image)
+# reshape data for the model
+image = image.reshape((1, image.shape[0], image.shape[1], image.shape[2]))
+# prepare the image for the VGG model
+image = preprocess_input(image)
+# load the model
+model = VGG16()
+# predict the probability across all output classes
+yhat = model.predict(image)
+# convert the probabilities to class labels
+label = decode_predictions(yhat)
+# retrieve the most likely result, e.g. highest probability
+label = label[0][0]
+# print the classification
+print('%s (%.2f%%)' % (label[1], label[2]*100))
+
+# load an image from file
+image = load_img('Golden_Retriever.jpg', target_size=(224, 224))
+# convert the image pixels to a numpy array
+image = img_to_array(image)
+# reshape data for the model
+image = image.reshape((1, image.shape[0], image.shape[1], image.shape[2]))
+# prepare the image for the VGG model
+image = preprocess_input(image)
+# load the model
+model = VGG16()
+# predict the probability across all output classes
+yhat = model.predict(image)
+# convert the probabilities to class labels
+label = decode_predictions(yhat)
+# retrieve the most likely result, e.g. highest probability
+label = label[0][0]
+# print the classification
+print('%s (%.2f%%)' % (label[1], label[2]*100))
+******************************************************************************************************************************************************************************************
+PR-6 object Detection_gayatri
+
+%pip install ultralytics
+
+from ultralytics import YOLO
+import matplotlib.pyplot as plt
+import cv2
+
+print("All libraries imported successfully!")
+
+
+import sys
+print(sys.executable)
+
+
+import sys
+!{sys.executable} -m pip install ultralytics
+
+%pip install ultralytics matplotlib opencv-python
+
+from ultralytics import YOLO
+import matplotlib.pyplot as plt
+import cv2
+
+model = YOLO("yolo11n.pt")
+
+results = model.train(
+    data=r"C:\Users\Sairam\OneDrive\Desktop\IT\dataset\data.yaml",
+    epochs=10,
+    imgsz=640,
+    batch=8,
+    name="bird_cat_dog_detection"
+)
+
+results = model.train(
+    data=r"C:\Users\Sairam\OneDrive\Desktop\IT\dataset\data.yaml",
+    epochs=10,
+    imgsz=640,
+    batch=8,
+    name="bird_cat_dog_detection"
+)
+
+best_model = YOLO(
+    "runs/detect/bird_cat_dog_detection/weights/best.pt"
+)
+
+print("Best model loaded successfully!")
+
+
+metrics = best_model.val(
+    data=str(DATA_YAML),
+    split="val"
+)
+
+print("Validation completed!")
+
+print("Precision:", metrics.box.mp)
+print("Recall:", metrics.box.mr)
+print("mAP50:", metrics.box.map50)
+print("mAP50-95:", metrics.box.map)
+
+from pathlib import Path
+
+TEST_IMAGES = DATASET_PATH / "test" / "images"
+
+if TEST_IMAGES.exists():
+    image_files = [
+        p for p in TEST_IMAGES.iterdir()
+        if p.suffix.lower() in [".jpg", ".jpeg", ".png", ".bmp"]
+    ]
+else:
+    image_files = []
+
+print("Images found:", len(image_files))
+print(image_files[:5])
+
+image_path = str(image_files[0])
+
+prediction_results = best_model.predict(
+    source=image_path,
+    conf=0.25,
+    save=True
+)
+
+print("Prediction completed!")
+
+
+import matplotlib.pyplot as plt
+import cv2
+
+for result in prediction_results:
+    annotated_image = result.plot()
+
+    annotated_image = cv2.cvtColor(
+        annotated_image,
+        cv2.COLOR_BGR2RGB
+    )
+
+    plt.figure(figsize=(10, 8))
+    plt.imshow(annotated_image)
+    plt.axis("off")
+    plt.title("Bird, Cat and Dog Object Detection")
+    plt.show()
+
+
+

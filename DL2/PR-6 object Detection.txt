@@ -1,0 +1,103 @@
+PR-6 object Detection_gayatri
+
+%pip install ultralytics
+
+from ultralytics import YOLO
+import matplotlib.pyplot as plt
+import cv2
+
+print("All libraries imported successfully!")
+
+
+import sys
+print(sys.executable)
+
+
+import sys
+!{sys.executable} -m pip install ultralytics
+
+%pip install ultralytics matplotlib opencv-python
+
+from ultralytics import YOLO
+import matplotlib.pyplot as plt
+import cv2
+
+model = YOLO("yolo11n.pt")
+
+results = model.train(
+    data=r"C:\Users\Sairam\OneDrive\Desktop\IT\dataset\data.yaml",
+    epochs=10,
+    imgsz=640,
+    batch=8,
+    name="bird_cat_dog_detection"
+)
+
+results = model.train(
+    data=r"C:\Users\Sairam\OneDrive\Desktop\IT\dataset\data.yaml",
+    epochs=10,
+    imgsz=640,
+    batch=8,
+    name="bird_cat_dog_detection"
+)
+
+best_model = YOLO(
+    "runs/detect/bird_cat_dog_detection/weights/best.pt"
+)
+
+print("Best model loaded successfully!")
+
+
+metrics = best_model.val(
+    data=str(DATA_YAML),
+    split="val"
+)
+
+print("Validation completed!")
+
+print("Precision:", metrics.box.mp)
+print("Recall:", metrics.box.mr)
+print("mAP50:", metrics.box.map50)
+print("mAP50-95:", metrics.box.map)
+
+from pathlib import Path
+
+TEST_IMAGES = DATASET_PATH / "test" / "images"
+
+if TEST_IMAGES.exists():
+    image_files = [
+        p for p in TEST_IMAGES.iterdir()
+        if p.suffix.lower() in [".jpg", ".jpeg", ".png", ".bmp"]
+    ]
+else:
+    image_files = []
+
+print("Images found:", len(image_files))
+print(image_files[:5])
+
+image_path = str(image_files[0])
+
+prediction_results = best_model.predict(
+    source=image_path,
+    conf=0.25,
+    save=True
+)
+
+print("Prediction completed!")
+
+
+import matplotlib.pyplot as plt
+import cv2
+
+for result in prediction_results:
+    annotated_image = result.plot()
+
+    annotated_image = cv2.cvtColor(
+        annotated_image,
+        cv2.COLOR_BGR2RGB
+    )
+
+    plt.figure(figsize=(10, 8))
+    plt.imshow(annotated_image)
+    plt.axis("off")
+    plt.title("Bird, Cat and Dog Object Detection")
+    plt.show()
