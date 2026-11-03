@@ -1,0 +1,470 @@
+======================================================================
+PRACTICAL 4: ANOMALY DETECTION USING AUTOENCODER (MNIST)
+Code first, then explanation of each block
+======================================================================
+----------------------------------------------------------------------
+BLOCK 0: Title and Imports
+----------------------------------------------------------------------
+CODE:
+# ==========================================================
+# PRACTICAL 4: ANOMALY DETECTION USING AUTOENCODER
+# Dataset: MNIST
+# Normal Class: 0
+# Anomaly Class: 1
+# ==========================================================
+
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras import layers, models
+
+EXPLANATION:
+This is the setup part. The comment block tells us the aim: detect anomalies using an Autoencoder on MNIST, treating digit 0 as 'normal' and digit 1 as 'anomaly'.
+Imports:
+ - numpy      : numerical arrays and maths (mean, square, percentile).
+ - matplotlib : plotting graphs and images.
+ - tensorflow : deep learning library.
+ - layers, models (from tensorflow.keras) : to build the neural network layers and models.
+IDEA OF THE PRACTICAL: An autoencoder trained ONLY on normal data learns to rebuild normal data well. When it sees something different (an anomaly) it rebuilds it badly, so the reconstruction error is HIGH. High error = anomaly.
+
+----------------------------------------------------------------------
+BLOCK 1: Load Dataset
+----------------------------------------------------------------------
+CODE:
+(x_train, y_train), (x_test, y_test) = \
+    tf.keras.datasets.mnist.load_data()
+
+print("Training data shape:", x_train.shape)
+print("Testing data shape:", x_test.shape)
+
+EXPLANATION:
+Loads the MNIST handwritten digit dataset (digits 0-9, each image 28x28 pixels).
+ - x_train / x_test : images, y_train / y_test : labels (which digit it is).
+ - The backslash (\) just continues the line.
+ - The print statements show shapes: (60000, 28, 28) = 60000 training images and (10000, 28, 28) = 10000 test images.
+
+----------------------------------------------------------------------
+BLOCK 2: Normalize Data
+----------------------------------------------------------------------
+CODE:
+x_train = x_train.astype("float32") / 255.0
+x_test = x_test.astype("float32") / 255.0
+
+EXPLANATION:
+Pixel values originally range 0-255 (integers). Converting to float32 and dividing by 255 scales them to 0-1.
+Why: neural networks train faster and more stably on small values, and the decoder's sigmoid output (0-1) matches this range.
+
+----------------------------------------------------------------------
+BLOCK 3: Select Normal Data (Digit 0)
+----------------------------------------------------------------------
+CODE:
+normal_class = 0
+
+x_train_normal = x_train[y_train == normal_class]
+x_test_normal = x_test[y_test == normal_class]
+
+print("Normal training samples:",
+      len(x_train_normal))
+
+print("Normal testing samples:",
+      len(x_test_normal))
+
+EXPLANATION:
+Keeps only images of digit 0 (the 'normal' class) using boolean masking: y_train == 0 gives True/False for each image and selects only the True ones.
+ - x_train_normal : 5923 zero images used for training.
+ - x_test_normal  : 980 zero images used for testing.
+The autoencoder never sees any 1s (anomalies) during training.
+
+----------------------------------------------------------------------
+BLOCK 4: Flatten Images
+----------------------------------------------------------------------
+CODE:
+x_train_normal = x_train_normal.reshape(
+    len(x_train_normal), 784
+)
+
+x_test_normal = x_test_normal.reshape(
+    len(x_test_normal), 784
+)
+
+EXPLANATION:
+Reshapes each 28x28 image into a single row of 784 numbers (28 x 28 = 784), because Dense (fully connected) layers need a 1-D vector as input.
+Shape becomes (number_of_images, 784).
+
+----------------------------------------------------------------------
+BLOCK 5: Build Encoder
+----------------------------------------------------------------------
+CODE:
+input_dim = 784
+latent_dim = 32
+
+encoder = models.Sequential([
+    layers.Input(shape=(input_dim,)),
+    layers.Dense(128, activation="relu"),
+    layers.Dense(64, activation="relu"),
+    layers.Dense(latent_dim, activation="relu")
+])
+
+EXPLANATION:
+Builds the ENCODER, which compresses the input.
+ - input_dim = 784 : size of each flattened image.
+ - latent_dim = 32 : size of the compressed representation (bottleneck).
+ - Layer flow: 784 -> 128 -> 64 -> 32 (Dense layers with ReLU activation).
+The encoder squeezes the image into just 32 numbers, forcing the network to learn only the most important features of a zero.
+
+----------------------------------------------------------------------
+BLOCK 6: Build Decoder
+----------------------------------------------------------------------
+CODE:
+decoder = models.Sequential([
+    layers.Input(shape=(latent_dim,)),
+    layers.Dense(64, activation="relu"),
+    layers.Dense(128, activation="relu"),
+    layers.Dense(input_dim, activation="sigmoid")
+])
+
+EXPLANATION:
+Builds the DECODER, which reconstructs the image from the compressed code.
+ - Layer flow: 32 -> 64 -> 128 -> 784 (mirror image of the encoder).
+ - Last layer uses 'sigmoid' so outputs lie between 0 and 1 (same as the normalized pixels).
+The decoder tries to rebuild the original image from the 32-number code.
+
+----------------------------------------------------------------------
+BLOCK 7: Combine Encoder + Decoder
+----------------------------------------------------------------------
+CODE:
+autoencoder_input = layers.Input(
+    shape=(input_dim,)
+)
+
+encoded = encoder(autoencoder_input)
+decoded = decoder(encoded)
+
+autoencoder = models.Model(
+    autoencoder_input,
+    decoded
+)
+
+EXPLANATION:
+Joins encoder and decoder into one model (the autoencoder).
+ - autoencoder_input : the input placeholder of size 784.
+ - encoded = encoder(input)  : compress.
+ - decoded = decoder(encoded): reconstruct.
+ - models.Model(input, decoded) : final model that goes Input -> Encoder -> Decoder -> Output.
+
+----------------------------------------------------------------------
+BLOCK 8: Compile Model
+----------------------------------------------------------------------
+CODE:
+autoencoder.compile(
+    optimizer="adam",
+    loss="mse",
+    metrics=["mae"]
+)
+
+print("\nAutoencoder Summary:")
+autoencoder.summary()
+
+EXPLANATION:
+Compiles the model (sets how it learns).
+ - optimizer='adam' : adaptive algorithm that updates weights.
+ - loss='mse' : Mean Squared Error between original and reconstructed image; the value to minimize.
+ - metrics=['mae'] : Mean Absolute Error, an extra measure to monitor.
+autoencoder.summary() prints each layer, its output shape and number of parameters.
+
+----------------------------------------------------------------------
+BLOCK 9: Train Autoencoder
+----------------------------------------------------------------------
+CODE:
+history = autoencoder.fit(
+    x_train_normal,
+    x_train_normal,
+    epochs=20,
+    batch_size=128,
+    validation_split=0.2,
+    shuffle=True
+)
+
+EXPLANATION:
+Trains the autoencoder.
+ - Input AND target are both x_train_normal, because the model must learn to reproduce its own input (unsupervised).
+ - epochs=20 : 20 full passes over the data.
+ - batch_size=128 : weights updated after every 128 images.
+ - validation_split=0.2 : 20% of data is held out to check performance on unseen data.
+ - shuffle=True : shuffles data every epoch.
+The returned 'history' stores loss values for each epoch.
+
+----------------------------------------------------------------------
+BLOCK 10: Plot Training Loss
+----------------------------------------------------------------------
+CODE:
+plt.figure(figsize=(8, 5))
+
+plt.plot(
+    history.history["loss"],
+    label="Training Loss"
+)
+
+plt.plot(
+    history.history["val_loss"],
+    label="Validation Loss"
+)
+
+plt.xlabel("Epoch")
+plt.ylabel("MSE Loss")
+plt.title("Autoencoder Training Loss")
+plt.legend()
+plt.show()
+
+EXPLANATION:
+Plots training loss and validation loss against the epoch number.
+A curve that goes down and flattens means the model is learning. If training and validation losses stay close, there is no big overfitting.
+
+----------------------------------------------------------------------
+BLOCK 11: Reconstruct Normal Data
+----------------------------------------------------------------------
+CODE:
+normal_reconstructed = autoencoder.predict(
+    x_test_normal,
+    verbose=0
+)
+
+EXPLANATION:
+Passes the normal test images (digit 0) through the trained autoencoder with predict() to get their reconstructed versions. verbose=0 hides the progress bar.
+
+----------------------------------------------------------------------
+BLOCK 12: Calculate Normal Reconstruction Error
+----------------------------------------------------------------------
+CODE:
+normal_errors = np.mean(
+    np.square(
+        x_test_normal - normal_reconstructed
+    ),
+    axis=1
+)
+
+EXPLANATION:
+Computes the reconstruction error for every normal image:
+ error = mean of (original - reconstructed)^2 over the 784 pixels (axis=1 means per image).
+Result: one error value per image (980 values). For normal data these should be small.
+
+----------------------------------------------------------------------
+BLOCK 13: Calculate Threshold
+----------------------------------------------------------------------
+CODE:
+threshold = np.percentile(
+    normal_errors,
+    95
+)
+
+print("\nAnomaly Threshold:",
+      threshold)
+
+EXPLANATION:
+Sets the anomaly THRESHOLD as the 95th percentile of the normal errors.
+Meaning: 95% of normal images have error below this value. Any image with error above the threshold is declared an anomaly.
+Output: threshold = about 0.0323. This choice also means about 5% of normal images will be wrongly flagged (false positives).
+
+----------------------------------------------------------------------
+BLOCK 14: Prepare Anomaly Data (Digit 1)
+----------------------------------------------------------------------
+CODE:
+anomaly_class = 1
+
+x_test_anomaly = x_test[
+    y_test == anomaly_class
+]
+
+x_test_anomaly = x_test_anomaly.reshape(
+    len(x_test_anomaly), 784
+)
+
+print("Anomaly samples:",
+      len(x_test_anomaly))
+
+EXPLANATION:
+Prepares the anomaly data: all test images of digit 1 (1135 images), flattened to 784 values. The model never saw 1s in training, so they are 'anomalies' for it.
+
+----------------------------------------------------------------------
+BLOCK 15: Reconstruct Anomaly Data
+----------------------------------------------------------------------
+CODE:
+anomaly_reconstructed = autoencoder.predict(
+    x_test_anomaly,
+    verbose=0
+)
+
+EXPLANATION:
+Passes the digit-1 images through the autoencoder to get their reconstructions. Since the model only learned to draw zeros, it reconstructs 1s poorly.
+
+----------------------------------------------------------------------
+BLOCK 16: Calculate Anomaly Error
+----------------------------------------------------------------------
+CODE:
+anomaly_errors = np.mean(
+    np.square(
+        x_test_anomaly - anomaly_reconstructed
+    ),
+    axis=1
+)
+
+EXPLANATION:
+Calculates the reconstruction error (MSE per image) for the anomaly images, same formula as step 12. These values are expected to be much higher than the normal errors.
+
+----------------------------------------------------------------------
+BLOCK 17: Detect Anomalies
+----------------------------------------------------------------------
+CODE:
+normal_predictions = normal_errors > threshold
+
+anomaly_predictions = anomaly_errors > threshold
+
+EXPLANATION:
+Applies the rule: error > threshold -> anomaly (True), otherwise normal (False).
+ - normal_predictions  : for digit 0 images; any True here is a mistake (false positive).
+ - anomaly_predictions : for digit 1 images; True means correctly detected.
+
+----------------------------------------------------------------------
+BLOCK 18: Calculate Results
+----------------------------------------------------------------------
+CODE:
+normal_false_positive = np.sum(
+    normal_predictions
+)
+
+anomaly_detected = np.sum(
+    anomaly_predictions
+)
+
+normal_detection_rate = (
+    normal_false_positive /
+    len(normal_predictions)
+) * 100
+
+anomaly_detection_rate = (
+    anomaly_detected /
+    len(anomaly_predictions)
+) * 100
+
+print("\n========== RESULTS ==========")
+
+print(
+    "Normal samples incorrectly classified:",
+    normal_false_positive
+)
+
+print(
+    "Anomalies detected:",
+    anomaly_detected
+)
+
+print(
+    "Anomaly Detection Rate:",
+    round(anomaly_detection_rate, 2),
+    "%"
+)
+
+print(
+    "False Positive Rate:",
+    round(normal_detection_rate, 2),
+    "%"
+)
+
+EXPLANATION:
+Computes and prints the results.
+ - normal_false_positive : number of normal images wrongly flagged (49).
+ - anomaly_detected : number of anomalies correctly caught (1133 out of 1135).
+ - Anomaly Detection Rate = 1133/1135 x 100 = 99.82% (true positive rate).
+ - False Positive Rate = 49/980 x 100 = 5.0% (as expected from the 95th percentile threshold).
+Conclusion: the autoencoder separates 0 from 1 very well.
+
+----------------------------------------------------------------------
+BLOCK 19: Plot Reconstruction Error
+----------------------------------------------------------------------
+CODE:
+plt.figure(figsize=(10, 5))
+
+plt.hist(
+    normal_errors,
+    bins=50,
+    alpha=0.6,
+    label="Normal"
+)
+
+plt.hist(
+    anomaly_errors,
+    bins=50,
+    alpha=0.6,
+    label="Anomaly"
+)
+
+plt.axvline(
+    threshold,
+    linestyle="--",
+    label="Threshold"
+)
+
+plt.xlabel("Reconstruction Error")
+plt.ylabel("Number of Samples")
+
+plt.title(
+    "Normal vs Anomaly Reconstruction Error"
+)
+
+plt.legend()
+plt.show()
+
+EXPLANATION:
+Plots histograms of reconstruction errors for normal (0) and anomaly (1) samples, with a dashed vertical line at the threshold.
+ - bins=50 : number of bars, alpha=0.6 : transparency so both overlap visibly.
+Normal errors cluster on the left (low), anomaly errors lie mostly to the right of the threshold line, showing clear separation.
+
+----------------------------------------------------------------------
+BLOCK 20: Display Anomaly Images
+----------------------------------------------------------------------
+CODE:
+n = 5
+
+plt.figure(figsize=(12, 5))
+
+for i in range(n):
+
+    # Original image
+    plt.subplot(2, n, i + 1)
+
+    plt.imshow(
+        x_test_anomaly[i].reshape(28, 28),
+        cmap="gray"
+    )
+
+    plt.title("Original")
+    plt.axis("off")
+
+    # Reconstructed image
+    plt.subplot(2, n, i + 1 + n)
+
+    plt.imshow(
+        anomaly_reconstructed[i].reshape(28, 28),
+        cmap="gray"
+    )
+
+    plt.title("Reconstructed")
+    plt.axis("off")
+
+plt.tight_layout()
+plt.show()
+
+EXPLANATION:
+Displays 5 anomaly images with their reconstructions.
+ - n = 5 images; the figure has 2 rows: top row = original, bottom row = reconstructed.
+ - plt.subplot(2, n, position) picks the cell in the grid; reshape(28, 28) turns the 784 vector back into an image.
+ - cmap='gray' : grayscale, axis('off') : hides axes, tight_layout() : avoids overlap.
+You will see that the reconstructed 1s look distorted/blobby like a zero, proving the model fails to reconstruct anomalies.
+
+======================================================================
+OVERALL SUMMARY
+======================================================================
+1. Train an autoencoder only on normal data (digit 0).
+2. Measure reconstruction error on normal test data and set a threshold (95th percentile).
+3. Feed anomalies (digit 1); their error is higher than the threshold, so they are flagged.
+4. Result: 99.82% anomalies detected with 5% false positives.

@@ -1,0 +1,403 @@
+=====================================================================
+DL EXPERIMENT 3 - IMAGE CLASSIFICATION (MNIST) USING A CNN
+Cleaned-up code with an explanation for every block
+=====================================================================
+
+AIM
+---
+Build a Convolutional Neural Network (CNN) that classifies 28x28
+grayscale images of handwritten digits (0-9) from the MNIST dataset.
+
+OVERALL FLOW
+------------
+Load data -> Normalize -> Reshape -> Build CNN -> Compile -> Train
+-> Evaluate -> Visualize predictions
+
+Each block below is marked "BLOCK n". The "WHAT / WHY" lines explain
+the block; the code that follows can be copied into a notebook cell.
+Lines starting with # are comments, so this whole file can also be
+pasted into one Python script.
+
+
+=====================================================================
+BLOCK 1 - IMPORT LIBRARIES
+=====================================================================
+WHAT: Imports every library the experiment needs.
+WHY:
+  - numpy               : array maths
+  - random              : picking random test images
+  - tensorflow / keras  : building and training the CNN
+  - matplotlib.pyplot   : plotting images and graphs
+  - sklearn.metrics     : accuracy, classification report, confusion matrix
+  - Sequential          : model type where layers are stacked one after another
+  - Conv2D              : convolution layer (learns image features/edges)
+  - MaxPooling2D        : shrinks feature maps, keeps strongest values
+  - Flatten             : converts 2D feature maps into a 1D vector
+  - Dense               : fully connected layer
+  - Dropout             : randomly switches off neurons to reduce overfitting
+  - SGD                 : Stochastic Gradient Descent optimizer
+  - mnist               : built-in handwritten digit dataset
+NOTE: pandas and to_categorical were removed because they were unused.
+
+CODE:
+import numpy as np
+import random
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
+from tensorflow.keras import Input
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Flatten, Conv2D, Dense, MaxPooling2D, Dropout
+from tensorflow.keras.optimizers import SGD
+from tensorflow.keras.datasets import mnist
+
+# Fix random seeds so results are (mostly) reproducible
+np.random.seed(42)
+random.seed(42)
+tf.random.set_seed(42)
+
+
+=====================================================================
+BLOCK 2 - LOAD THE DATASET
+=====================================================================
+WHAT: Downloads MNIST (first run only) and splits it into train/test.
+WHY:
+  - X_train : 60,000 training images, shape (60000, 28, 28)
+  - y_train : 60,000 labels (0-9)
+  - X_test  : 10,000 test images
+  - y_test  : 10,000 test labels
+  The test set is kept unseen during training so we can measure how
+  well the model generalizes.
+
+CODE:
+(X_train, y_train), (X_test, y_test) = mnist.load_data()
+
+
+=====================================================================
+BLOCK 3 - CHECK DATA SHAPE AND PIXEL RANGE
+=====================================================================
+WHAT: Prints the dataset shape and the min/max pixel value.
+WHY: Confirms the data loaded correctly. Pixels are integers from
+     0 (black) to 255 (white), so the output is (0, 255).
+
+CODE:
+print("Train shape:", X_train.shape)
+print("Test shape :", X_test.shape)
+print("Pixel range:", X_train[0].min(), X_train[0].max())
+
+
+=====================================================================
+BLOCK 4 - NORMALIZE PIXEL VALUES
+=====================================================================
+WHAT: Divides all pixels by 255 so they lie between 0.0 and 1.0.
+WHY: Neural networks train faster and more stably when inputs are
+     small and on a similar scale. (The original expression
+     (X - 0.0) / (255.0 - 0.0) is the same as X / 255.0.)
+
+CODE:
+X_train = X_train / 255.0
+X_test = X_test / 255.0
+print("After scaling:", X_train[0].min(), X_train[0].max())
+
+
+=====================================================================
+BLOCK 5 - HELPER FUNCTION TO PLOT DIGITS
+=====================================================================
+WHAT: Defines plot_digit(), which draws one image in a 4x5 grid.
+WHY: Reusable so we can plot training samples and predictions
+     without repeating code. cmap='gray' shows the digit in
+     grayscale; ticks are hidden for a cleaner look.
+     The "color" argument lets us colour a title green (correct)
+     or red (wrong) later.
+
+CODE:
+def plot_digit(image, title, i, color="black"):
+    plt.subplot(4, 5, i + 1)
+    plt.imshow(image, cmap="gray")
+    plt.title(title, color=color)
+    plt.xticks([])
+    plt.yticks([])
+
+
+=====================================================================
+BLOCK 6 - VISUALIZE SOME TRAINING IMAGES
+=====================================================================
+WHAT: Shows the first 20 training images with their labels.
+WHY: A quick sanity check that images and labels match.
+
+CODE:
+plt.figure(figsize=(16, 10))
+for i in range(20):
+    plot_digit(X_train[i], f"Digit: {y_train[i]}", i)
+plt.show()
+
+
+=====================================================================
+BLOCK 7 - ADD A CHANNEL DIMENSION
+=====================================================================
+WHAT: Reshapes (60000, 28, 28) to (60000, 28, 28, 1).
+WHY: Conv2D expects 4D input: (samples, height, width, channels).
+     MNIST is grayscale, so channels = 1 (an RGB image would have 3).
+
+CODE:
+X_train = X_train[..., np.newaxis]
+X_test = X_test[..., np.newaxis]
+print("New train shape:", X_train.shape)
+
+
+=====================================================================
+BLOCK 8 - LOOK AT THE LABELS
+=====================================================================
+WHAT: Prints the first 20 labels.
+WHY: Labels are plain integers 0-9. Because they are integers (not
+     one-hot vectors), we will use "sparse_categorical_crossentropy"
+     as the loss function.
+
+CODE:
+print(y_train[:20])
+
+
+=====================================================================
+BLOCK 9 - BUILD THE CNN MODEL
+=====================================================================
+WHAT: Defines the network layer by layer.
+WHY, layer by layer:
+  Input(28,28,1)          : declares the input image shape
+  Conv2D(32, 3x3, relu)   : 32 filters scan the image and learn simple
+                            features (edges, curves). Output 26x26x32.
+  MaxPooling2D(2x2)       : halves width/height (26 -> 13), keeping the
+                            strongest activations; reduces computation.
+  Conv2D(64, 3x3, relu)   : learns more complex patterns from the first
+                            layer's features. Output 11x11x64.
+  MaxPooling2D(2x2)       : halves size again (11 -> 5).
+  Flatten                 : turns the 5x5x64 maps into one vector.
+  Dense(100, relu)        : fully connected layer that combines features.
+  Dropout(0.5)            : randomly drops 50% of neurons during training
+                            so the model does not memorize the training
+                            data (reduces overfitting).
+  Dense(10, softmax)      : 10 outputs (digits 0-9); softmax converts them
+                            into probabilities that sum to 1.
+NOTE: The original model had only one Conv/Pool block and no Dropout.
+      This version is slightly deeper and more resistant to overfitting.
+
+CODE:
+model = Sequential([
+    Input(shape=(28, 28, 1)),
+    Conv2D(32, (3, 3), activation="relu"),
+    MaxPooling2D((2, 2)),
+    Conv2D(64, (3, 3), activation="relu"),
+    MaxPooling2D((2, 2)),
+    Flatten(),
+    Dense(100, activation="relu"),
+    Dropout(0.5),
+    Dense(10, activation="softmax"),
+])
+
+
+=====================================================================
+BLOCK 10 - COMPILE THE MODEL AND VIEW SUMMARY
+=====================================================================
+WHAT: Chooses the optimizer, loss function and metric, then prints
+      the architecture.
+WHY:
+  - optimizer SGD (lr=0.01, momentum=0.9) : updates the weights to
+    reduce the loss; momentum smooths and speeds up the updates.
+  - loss sparse_categorical_crossentropy  : suitable for multi-class
+    classification when labels are integers.
+  - metrics accuracy                      : percentage of correct
+    predictions, reported during training.
+  - model.summary()                       : shows each layer's output
+    shape and the number of trainable parameters.
+
+CODE:
+optimizer = SGD(learning_rate=0.01, momentum=0.9)
+model.compile(
+    optimizer=optimizer,
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"],
+)
+model.summary()
+
+
+=====================================================================
+BLOCK 11 - TRAIN THE MODEL
+=====================================================================
+WHAT: Trains the network for 10 epochs.
+WHY:
+  - epochs=10           : the model sees the full training set 10 times.
+  - batch_size=32       : weights are updated after every 32 images.
+  - validation_split=0.1: 10% of the training data is held out and used
+    only to check performance after each epoch. Comparing training vs
+    validation accuracy/loss shows whether the model is overfitting.
+  - history             : stores the per-epoch numbers for plotting.
+
+CODE:
+history = model.fit(
+    X_train, y_train,
+    epochs=10,
+    batch_size=32,
+    validation_split=0.1,
+)
+
+
+=====================================================================
+BLOCK 12 - PLOT TRAINING CURVES
+=====================================================================
+WHAT: Plots accuracy and loss for training vs validation.
+WHY:
+  - If training accuracy keeps rising while validation accuracy flattens
+    or drops, the model is overfitting.
+  - If both curves improve together and stay close, the model is
+    learning well.
+
+CODE:
+plt.figure(figsize=(12, 4))
+
+plt.subplot(1, 2, 1)
+plt.plot(history.history["accuracy"], label="Train")
+plt.plot(history.history["val_accuracy"], label="Validation")
+plt.title("Accuracy")
+plt.xlabel("Epoch")
+plt.legend()
+
+plt.subplot(1, 2, 2)
+plt.plot(history.history["loss"], label="Train")
+plt.plot(history.history["val_loss"], label="Validation")
+plt.title("Loss")
+plt.xlabel("Epoch")
+plt.legend()
+
+plt.show()
+
+
+=====================================================================
+BLOCK 13 - EVALUATE ON THE TEST SET
+=====================================================================
+WHAT: Predicts all 10,000 test images once and computes the metrics.
+WHY:
+  - model.predict gives 10 probabilities per image; np.argmax picks
+    the most likely digit.
+  - accuracy_score compares predictions with true labels.
+  - model.evaluate returns test loss and test accuracy.
+  - Predictions are stored in "predictions" so later blocks can reuse
+    them instead of calling model.predict again (the original code
+    re-predicted the whole test set several times).
+
+CODE:
+predictions = np.argmax(model.predict(X_test), axis=1)
+print("Test accuracy (sklearn):", accuracy_score(y_test, predictions))
+
+test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
+print(f"Test loss    : {test_loss:.4f}")
+print(f"Test accuracy: {test_acc:.4f}")
+
+
+=====================================================================
+BLOCK 14 - CLASSIFICATION REPORT AND CONFUSION MATRIX
+=====================================================================
+WHAT: Shows precision, recall and F1-score for each digit, and a
+      confusion matrix.
+WHY:
+  - The report shows which digits the model finds hardest.
+  - In the confusion matrix, rows = actual digit, columns = predicted
+    digit. Numbers on the diagonal are correct predictions; numbers
+    off the diagonal are mistakes (e.g. a 4 predicted as 9).
+
+CODE:
+print(classification_report(y_test, predictions))
+
+cm = confusion_matrix(y_test, predictions)
+plt.figure(figsize=(8, 6))
+plt.imshow(cm, cmap="Blues")
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.colorbar()
+plt.xticks(range(10))
+plt.yticks(range(10))
+for r in range(10):
+    for c in range(10):
+        plt.text(c, r, cm[r, c], ha="center", va="center", fontsize=8,
+                 color="white" if cm[r, c] > cm.max() / 2 else "black")
+plt.show()
+
+
+=====================================================================
+BLOCK 15 - VISUALIZE RANDOM TEST PREDICTIONS (FIXED)
+=====================================================================
+WHAT: Picks 20 random test images and shows predicted vs true digit.
+WHY:
+  - A green title means correct; red means wrong.
+  - FIX: the original code showed only the predicted digit, so you
+    could not tell whether it was right. It also called model.predict
+    20 separate times, which is slow. Here we predict all 20 at once
+    using the "predictions" array from Block 13.
+
+CODE:
+idx = np.random.choice(len(X_test), 20, replace=False)
+
+plt.figure(figsize=(16, 10))
+for i, j in enumerate(idx):
+    pred, true = predictions[j], y_test[j]
+    plot_digit(
+        X_test[j].squeeze(),
+        f"Pred: {pred} | True: {true}",
+        i,
+        color="green" if pred == true else "red",
+    )
+plt.show()
+
+
+=====================================================================
+BLOCK 16 - PREDICT ONE SINGLE IMAGE (FIXED)
+=====================================================================
+WHAT: Shows one random test image and prints the prediction next to
+      the actual label.
+WHY:
+  - FIX: the original used plt.imshow(X_test[n]) without cmap and
+    without .squeeze(), so the image was drawn in the wrong colormap.
+  - FIX: the original ran model.predict(X_test) on all 10,000 images
+    just to read one value. Here we reuse "predictions".
+
+CODE:
+n = random.randint(0, len(X_test) - 1)
+plt.imshow(X_test[n].squeeze(), cmap="gray")
+plt.title(f"Test image #{n}")
+plt.axis("off")
+plt.show()
+
+print("Handwritten number in the image is =", predictions[n])
+print("Actual label                      =", y_test[n])
+
+
+=====================================================================
+BLOCK 17 - CONCLUSION
+=====================================================================
+WHAT: Prints the final result using the real computed values.
+WHY: The original used a hard-coded comment with numbers, which goes
+     stale whenever the model is retrained. An f-string always shows
+     the current values.
+
+CODE:
+print(f"The implemented CNN model gives Loss = {test_loss:.4f} "
+      f"and Accuracy = {test_acc:.4f} on the MNIST test dataset.")
+
+
+=====================================================================
+SUMMARY OF CHANGES FROM THE ORIGINAL NOTEBOOK
+=====================================================================
+1. Removed unused imports (pandas, to_categorical).
+2. Added random seeds for reproducibility.
+3. Used Input(...) layer instead of the deprecated input_shape argument.
+4. Added a second Conv/Pool block and Dropout(0.5).
+5. Added validation_split and training/validation curves.
+6. Fixed the prediction plots: now show predicted vs true label, with
+   grayscale display and green/red colouring.
+7. Predict the test set once and reuse the result.
+8. Added classification report and confusion matrix.
+9. Replaced hard-coded result comments with a printed result.
+
+NOTE: The original notebook got 98.72% test accuracy. Re-run this
+version to get your own final numbers; they will vary slightly
+from run to run.

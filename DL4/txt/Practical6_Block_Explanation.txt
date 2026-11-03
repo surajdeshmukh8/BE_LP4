@@ -1,0 +1,635 @@
+=====================================================================
+LP IV PRACTICAL 6 - TRANSFER LEARNING (CLASSIFICATION + DETECTION)
+Bird / Cat / Dog using MobileNetV2 and YOLO
+Cleaned-up code with an explanation for every block
+=====================================================================
+
+AIM
+---
+Use a pre-trained network (transfer learning) to:
+  Part A - classify images into 3 classes: bird, cat, dog
+           (MobileNetV2 + custom classifier + fine-tuning)
+  Part B - detect and draw boxes around bird, cat and dog in an image
+           (pre-trained YOLO fine-tuned on our dataset)
+
+OVERALL FLOW
+------------
+PART A: Set parameters -> Load data -> Load MobileNetV2 -> Freeze it
+-> Add classifier -> Compile -> Train -> Evaluate -> Fine-tune
+-> Final evaluation -> Plot graphs
+PART B: Install ultralytics -> Load YOLO -> Train -> Validate
+-> Predict on a test image -> Display result
+
+Each block below is marked "BLOCK n". The "WHAT / WHY" lines explain
+the block; the code that follows can be copied into a notebook cell.
+Lines starting with # are comments, so this whole file can also be
+pasted into one Python script.
+
+
+#####################################################################
+PART A - IMAGE CLASSIFICATION USING MOBILENETV2
+#####################################################################
+
+=====================================================================
+BLOCK 1 - IMPORT LIBRARIES
+=====================================================================
+WHAT: Imports every library needed for Part A.
+WHY:
+  - tensorflow            : deep learning framework (includes Keras)
+  - numpy                 : array maths
+  - matplotlib.pyplot     : plotting accuracy/loss graphs
+  - ImageDataGenerator    : loads images from folders, rescales them and
+                            creates augmented (modified) copies
+  - MobileNetV2           : a light CNN already trained on ImageNet
+  - GlobalAveragePooling2D: shrinks each feature map to a single number
+  - Dense                 : fully connected layer
+  - Dropout               : randomly switches off neurons to reduce
+                            overfitting
+  - Model                 : joins an input and an output into one model
+  - Adam                  : optimizer that updates the weights
+
+CODE:
+import tensorflow as tf
+import numpy as np
+import matplotlib.pyplot as plt
+
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+
+
+=====================================================================
+BLOCK 2 - SET PARAMETERS AND DATASET PATHS
+=====================================================================
+WHAT: Stores the image size, batch size and folder locations.
+WHY:
+  - IMG_SIZE = (128, 128) : every image is resized to 128 x 128 pixels
+                            so all inputs have the same shape.
+  - BATCH_SIZE = 32       : number of images processed at one time.
+  - The dataset folder must look like this (folder names = class names):
+        dataset/
+          train/        bird/  cat/  dog/
+          validation/   bird/  cat/  dog/
+          test/         bird/  cat/  dog/
+  - The r"..." (raw string) prefix stops Windows backslashes from being
+    treated as special characters.
+
+CODE:
+IMG_SIZE = (128, 128)
+BATCH_SIZE = 32
+
+BASE_PATH = r"C:\Users\Sairam\OneDrive\Desktop\IT\dataset"
+
+TRAIN_PATH = BASE_PATH + r"\train"
+VALIDATION_PATH = BASE_PATH + r"\validation"
+TEST_PATH = BASE_PATH + r"\test"
+
+
+=====================================================================
+BLOCK 3 - DATA PREPROCESSING (GENERATORS)
+=====================================================================
+WHAT: Creates three ImageDataGenerator objects.
+WHY:
+  - rescale = 1/255 : converts pixel values from 0-255 to 0-1 so the
+                      network trains faster and more stably.
+  - Training data also gets AUGMENTATION:
+        rotation_range=20       : random rotation up to 20 degrees
+        width_shift_range=0.2   : random horizontal shift (20%)
+        height_shift_range=0.2  : random vertical shift (20%)
+        horizontal_flip=True    : random left-right flip
+    This produces many different versions of each image, which helps
+    when the dataset is small and reduces overfitting.
+  - Validation and test data are only rescaled. They must NOT be
+    augmented, because they are used to measure real performance.
+
+CODE:
+train_datagen = ImageDataGenerator(
+    rescale=1.0 / 255,
+    rotation_range=20,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    horizontal_flip=True
+)
+
+validation_datagen = ImageDataGenerator(rescale=1.0 / 255)
+
+test_datagen = ImageDataGenerator(rescale=1.0 / 255)
+
+
+=====================================================================
+BLOCK 4 - LOAD TRAIN, VALIDATION AND TEST DATA
+=====================================================================
+WHAT: Reads the images from the folders and prepares batches.
+WHY:
+  - flow_from_directory treats each sub-folder as one class.
+  - class_mode="categorical" creates one-hot labels (needed for 3
+    classes, e.g. cat = [0, 1, 0]).
+  - shuffle=True for training mixes the order every epoch.
+  - shuffle=False for validation/test keeps a fixed order so results
+    can be compared and matched with labels.
+  - Output in your run:
+        Found 3 images belonging to 3 classes.   (train)
+        Found 3 images belonging to 3 classes.   (validation)
+        Found 2 images belonging to 3 classes.   (test)
+    This is a VERY small dataset (see the note at the end).
+
+CODE:
+train_data = train_datagen.flow_from_directory(
+    TRAIN_PATH,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode="categorical",
+    shuffle=True
+)
+
+validation_data = validation_datagen.flow_from_directory(
+    VALIDATION_PATH,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode="categorical",
+    shuffle=False
+)
+
+test_data = test_datagen.flow_from_directory(
+    TEST_PATH,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode="categorical",
+    shuffle=False
+)
+
+
+=====================================================================
+BLOCK 5 - NUMBER OF CLASSES
+=====================================================================
+WHAT: Reads how many classes were found and their index numbers.
+WHY: The final layer of the model needs to know how many outputs to
+     create. Output in your run:
+        Number of classes: 3
+        Class names: {'bird': 0, 'cat': 1, 'dog': 2}
+     Classes are numbered alphabetically by folder name.
+
+CODE:
+num_classes = train_data.num_classes
+
+print("\nNumber of classes:", num_classes)
+print("Class names:", train_data.class_indices)
+
+
+=====================================================================
+BLOCK 6 - LOAD PRE-TRAINED MOBILENETV2
+=====================================================================
+WHAT: Loads MobileNetV2 without its original classification layers.
+WHY:
+  - weights="imagenet" : uses weights already learned from millions of
+                         ImageNet images. The network already knows
+                         edges, textures, shapes, fur, feathers, etc.
+  - include_top=False  : removes the original 1000-class output layers
+                         so we can attach our own 3-class classifier.
+  - input_shape=(128,128,3) : 128 x 128 colour (RGB) images.
+  This is the core idea of TRANSFER LEARNING: reuse knowledge from a
+  big task for a new, smaller task.
+
+CODE:
+base_model = MobileNetV2(
+    weights="imagenet",
+    include_top=False,
+    input_shape=(128, 128, 3)
+)
+
+
+=====================================================================
+BLOCK 7 - FREEZE THE PRE-TRAINED LAYERS
+=====================================================================
+WHAT: Stops MobileNetV2's weights from being updated.
+WHY: In the first training phase only our new layers should learn.
+     If the base layers were also trained at this point, the random
+     new layers would send large wrong updates backwards and damage
+     the useful pre-trained features.
+
+CODE:
+base_model.trainable = False
+
+
+=====================================================================
+BLOCK 8 - ADD THE CUSTOM CLASSIFIER
+=====================================================================
+WHAT: Adds new layers on top of MobileNetV2.
+WHY, layer by layer:
+  GlobalAveragePooling2D : converts the (4, 4, 1280) feature maps into
+                           one vector of 1280 values.
+  Dense(128, relu)       : fully connected layer that learns to combine
+                           the features for our 3 classes.
+  Dropout(0.5)           : randomly drops 50% of neurons during
+                           training to reduce overfitting.
+  Dense(num_classes,
+        softmax)         : 3 outputs (bird, cat, dog). Softmax turns
+                           them into probabilities that sum to 1.
+
+CODE:
+x = base_model.output
+x = GlobalAveragePooling2D()(x)
+x = Dense(128, activation="relu")(x)
+x = Dropout(0.5)(x)
+output = Dense(num_classes, activation="softmax")(x)
+
+
+=====================================================================
+BLOCK 9 - CREATE THE FINAL MODEL
+=====================================================================
+WHAT: Joins MobileNetV2 (input) and our classifier (output) into one
+      model.
+WHY: Keras needs a single Model object to compile, train and predict.
+
+CODE:
+model = Model(inputs=base_model.input, outputs=output)
+
+
+=====================================================================
+BLOCK 10 - COMPILE THE MODEL AND VIEW SUMMARY
+=====================================================================
+WHAT: Chooses the optimizer, loss function and metric, then prints the
+      architecture.
+WHY:
+  - optimizer Adam (learning rate 0.001) : adjusts the weights to
+    reduce the loss; Adam adapts the step size automatically.
+  - loss categorical_crossentropy : correct loss for multi-class
+    classification with one-hot labels.
+  - metrics accuracy              : percentage of correct predictions.
+  - model.summary() prints every layer. In your run:
+        Total params         : 2,422,339
+        Trainable params     :   164,355  (only our new layers)
+        Non-trainable params : 2,257,984  (frozen MobileNetV2)
+
+CODE:
+model.compile(
+    optimizer=Adam(learning_rate=0.001),
+    loss="categorical_crossentropy",
+    metrics=["accuracy"]
+)
+
+model.summary()
+
+
+=====================================================================
+BLOCK 11 - TRAIN THE CUSTOM CLASSIFIER (PHASE 1)
+=====================================================================
+WHAT: Trains only the new top layers for 5 epochs.
+WHY:
+  - One epoch = the model sees the full training set once.
+  - validation_data is used to check performance after every epoch.
+  - history1 stores accuracy/loss per epoch for plotting later.
+  - The base model is still frozen in this phase.
+
+CODE:
+history1 = model.fit(
+    train_data,
+    validation_data=validation_data,
+    epochs=5
+)
+
+
+=====================================================================
+BLOCK 12 - EVALUATE BEFORE FINE-TUNING
+=====================================================================
+WHAT: Tests the model on the unseen test set.
+WHY: Gives a baseline so we can see whether fine-tuning helps.
+     Your result:
+        Test Loss     : 1.2990
+        Test Accuracy : 0.5  (50%)
+     With only 2 test images, 50% means 1 image was correct.
+
+CODE:
+test_loss1, test_accuracy1 = model.evaluate(test_data)
+
+print("\nTest Loss Before Fine-Tuning:", test_loss1)
+print("Test Accuracy Before Fine-Tuning:", test_accuracy1)
+
+
+=====================================================================
+BLOCK 13 - FINE-TUNING: UNFREEZE THE LAST 20 LAYERS
+=====================================================================
+WHAT: Makes the last 20 layers of MobileNetV2 trainable again.
+WHY:
+  - Early layers learn general features (edges, colours) that are
+    useful for any image task, so they stay frozen.
+  - Later layers learn more task-specific features, so retraining them
+    lets the model adapt to birds, cats and dogs.
+  - base_model.trainable = True unfreezes everything first, then the
+    loop freezes all layers except the last 20.
+
+CODE:
+base_model.trainable = True
+
+for layer in base_model.layers[:-20]:
+    layer.trainable = False
+
+
+=====================================================================
+BLOCK 14 - RECOMPILE WITH A SMALL LEARNING RATE
+=====================================================================
+WHAT: Compiles the model again with learning rate 0.0001.
+WHY:
+  - Compiling must be repeated after changing which layers are
+    trainable, otherwise the change does not take effect.
+  - The learning rate is 10 times smaller than before so the
+    pre-trained weights are only adjusted gently and not destroyed.
+
+CODE:
+model.compile(
+    optimizer=Adam(learning_rate=0.0001),
+    loss="categorical_crossentropy",
+    metrics=["accuracy"]
+)
+
+
+=====================================================================
+BLOCK 15 - FINE-TUNE THE MODEL (PHASE 2)
+=====================================================================
+WHAT: Trains for 5 more epochs with the last 20 base layers unfrozen.
+WHY: history2 stores this phase separately so both phases can be
+     joined into one graph afterwards.
+
+CODE:
+history2 = model.fit(
+    train_data,
+    validation_data=validation_data,
+    epochs=5
+)
+
+
+=====================================================================
+BLOCK 16 - FINAL EVALUATION
+=====================================================================
+WHAT: Tests the fine-tuned model on the test set.
+WHY: Compare with Block 12 to see the effect of fine-tuning.
+     Your result:
+        Final Test Loss     : 0.8183  (improved from 1.2990)
+        Final Test Accuracy : 0.5     (same as before)
+     Loss improved but accuracy did not change because the test set
+     has only 2 images.
+
+CODE:
+test_loss2, test_accuracy2 = model.evaluate(test_data)
+
+print("\nFinal Test Loss:", test_loss2)
+print("Final Test Accuracy:", test_accuracy2)
+
+
+=====================================================================
+BLOCK 17 - COMBINE TRAINING HISTORY
+=====================================================================
+WHAT: Joins the results of both phases into single lists.
+WHY: history1 and history2 are 5 epochs each. Adding the lists gives
+     one continuous record of 10 epochs for plotting.
+
+CODE:
+accuracy = history1.history["accuracy"] + history2.history["accuracy"]
+val_accuracy = history1.history["val_accuracy"] + history2.history["val_accuracy"]
+loss = history1.history["loss"] + history2.history["loss"]
+val_loss = history1.history["val_loss"] + history2.history["val_loss"]
+
+
+=====================================================================
+BLOCK 18 - PLOT ACCURACY
+=====================================================================
+WHAT: Draws training vs validation accuracy over 10 epochs.
+WHY:
+  - The dashed vertical line marks where fine-tuning starts
+    (after epoch 5).
+  - If training accuracy rises while validation accuracy stays low,
+    the model is overfitting.
+  - Curves are jumpy in your output because the dataset has only 3
+    training images.
+
+CODE:
+plt.figure(figsize=(8, 5))
+plt.plot(accuracy, label="Training Accuracy")
+plt.plot(val_accuracy, label="Validation Accuracy")
+plt.axvline(x=4, linestyle="--", label="Fine-Tuning Starts")
+plt.xlabel("Epoch")
+plt.ylabel("Accuracy")
+plt.title("MobileNetV2 Transfer Learning Accuracy")
+plt.legend()
+plt.show()
+
+
+=====================================================================
+BLOCK 19 - PLOT LOSS
+=====================================================================
+WHAT: Draws training vs validation loss over 10 epochs.
+WHY: Loss should go down as the model learns. Your validation loss
+     falls steadily (1.34 -> 0.01), but this is on only 3 images so
+     it is not a reliable measure.
+
+CODE:
+plt.figure(figsize=(8, 5))
+plt.plot(loss, label="Training Loss")
+plt.plot(val_loss, label="Validation Loss")
+plt.axvline(x=4, linestyle="--", label="Fine-Tuning Starts")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.title("MobileNetV2 Transfer Learning Loss")
+plt.legend()
+plt.show()
+
+
+#####################################################################
+PART B - OBJECT DETECTION USING YOLO
+#####################################################################
+
+=====================================================================
+BLOCK 20 - INSTALL THE ULTRALYTICS LIBRARY (FIXES THE ERROR)
+=====================================================================
+WHAT: Installs the library that contains YOLO.
+WHY: Your run failed with
+        ModuleNotFoundError: No module named 'ultralytics'
+     which means the library is not installed. Run ONE of these:
+        In Command Prompt :  pip install ultralytics opencv-python
+        In a notebook cell:  !pip install ultralytics opencv-python
+     Then restart the kernel (Kernel > Restart) and run again.
+     The first run also downloads yolo11n.pt (internet needed).
+
+CODE:
+# pip install ultralytics opencv-python
+
+
+=====================================================================
+BLOCK 21 - IMPORT LIBRARIES AND LOAD PRE-TRAINED YOLO
+=====================================================================
+WHAT: Imports YOLO and loads a small pre-trained model.
+WHY:
+  - YOLO ("You Only Look Once") finds objects and draws bounding boxes
+    in a single pass, so it is fast.
+  - yolo11n.pt is the "nano" version: smallest and fastest, trained on
+    the COCO dataset (which already includes bird, cat and dog).
+  - cv2 (OpenCV) converts image colours; matplotlib displays the image.
+  - A separate variable name (yolo_model) is used so it does not
+    overwrite the Part A "model".
+
+CODE:
+from ultralytics import YOLO
+import matplotlib.pyplot as plt
+import cv2
+
+yolo_model = YOLO("yolo11n.pt")
+
+
+=====================================================================
+BLOCK 22 - DATASET FORMAT REQUIRED BY YOLO (data.yaml)
+=====================================================================
+WHAT: Explains the dataset needed for YOLO training.
+WHY:
+  - YOLO needs BOUNDING-BOX labels, not just class folders. Each image
+    needs a .txt file with lines like:
+        class_id  x_center  y_center  width  height   (values 0-1)
+  - Folder layout:
+        dataset/
+          images/train  images/val  images/test
+          labels/train  labels/val  labels/test
+  - data.yaml tells YOLO where everything is:
+
+        path: C:/Users/Sairam/OneDrive/Desktop/IT/dataset
+        train: images/train
+        val: images/val
+        test: images/test
+        names:
+          0: bird
+          1: cat
+          2: dog
+
+  - The plain class folders used in Part A are NOT enough for this
+    step. Labels can be created with tools like LabelImg, CVAT or
+    Roboflow.
+
+CODE:
+# (data.yaml is a text file, not Python code - save it in the dataset folder)
+
+
+=====================================================================
+BLOCK 23 - TRAIN / FINE-TUNE YOLO
+=====================================================================
+WHAT: Fine-tunes the pre-trained YOLO model on our dataset.
+WHY:
+  - data   : path to data.yaml
+  - epochs : 10 passes over the training data
+  - imgsz  : images are resized to 640 x 640
+  - batch  : 8 images per update (small value saves memory)
+  - name   : results are saved in runs/detect/bird_cat_dog_detection
+  This is transfer learning again: YOLO already knows how to detect
+  objects, and we adapt it to our data.
+
+CODE:
+results = yolo_model.train(
+    data=r"C:\Users\Sairam\OneDrive\Desktop\IT\dataset\data.yaml",
+    epochs=10,
+    imgsz=640,
+    batch=8,
+    name="bird_cat_dog_detection"
+)
+
+
+=====================================================================
+BLOCK 24 - VALIDATE THE MODEL
+=====================================================================
+WHAT: Measures detection quality on the validation set.
+WHY: Prints precision, recall, mAP50 and mAP50-95.
+     mAP (mean Average Precision) is the standard accuracy measure for
+     object detection: higher is better (maximum 1.0).
+
+CODE:
+metrics = yolo_model.val()
+
+print("\nValidation completed")
+print("mAP50    :", metrics.box.map50)
+print("mAP50-95 :", metrics.box.map)
+
+
+=====================================================================
+BLOCK 25 - PREDICT ON A TEST IMAGE
+=====================================================================
+WHAT: Runs detection on one image.
+WHY:
+  - image_path : location of the picture to test.
+  - conf=0.25  : detections with less than 25% confidence are ignored.
+    Raise it (e.g. 0.5) for fewer but more certain detections.
+
+CODE:
+image_path = r"C:\Users\Sairam\OneDrive\Desktop\IT\dataset\test.jpg"
+
+results = yolo_model.predict(
+    source=image_path,
+    conf=0.25
+)
+
+
+=====================================================================
+BLOCK 26 - DISPLAY THE DETECTION RESULT
+=====================================================================
+WHAT: Draws the boxes and labels on the image and shows it.
+WHY:
+  - result.plot() returns the image with boxes, class names and
+    confidence scores drawn on it.
+  - OpenCV uses BGR colour order while matplotlib uses RGB, so
+    cv2.cvtColor(..., COLOR_BGR2RGB) fixes the colours.
+  - plt.axis("off") hides the axis numbers.
+
+CODE:
+for result in results:
+    annotated_image = result.plot()
+    annotated_image = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+
+    plt.figure(figsize=(10, 8))
+    plt.imshow(annotated_image)
+    plt.axis("off")
+    plt.title("Bird, Cat and Dog Object Detection")
+    plt.show()
+
+
+=====================================================================
+BLOCK 27 - CONCLUSION
+=====================================================================
+WHAT: Prints the final result using real computed values.
+WHY: An f-string always shows the current numbers, even if the model
+     is retrained.
+
+CODE:
+print(f"MobileNetV2 transfer learning: Test Loss = {test_loss2:.4f}, "
+      f"Test Accuracy = {test_accuracy2:.4f}")
+print("YOLO fine-tuned model detects birds, cats and dogs in images.")
+
+
+=====================================================================
+LIBRARIES TO INSTALL (SUMMARY)
+=====================================================================
+    pip install tensorflow numpy matplotlib
+    pip install ultralytics opencv-python
+
+  tensorflow     : Keras, MobileNetV2, ImageDataGenerator
+  numpy          : array handling
+  matplotlib     : graphs and showing images
+  ultralytics    : YOLO models
+  opencv-python  : cv2 (colour conversion)
+
+Tip: if installation fails, upgrade pip first:
+    python -m pip install --upgrade pip
+
+
+=====================================================================
+IMPORTANT NOTES ON THE ORIGINAL NOTEBOOK
+=====================================================================
+1. DATASET TOO SMALL: only 3 train, 3 validation and 2 test images.
+   Accuracy jumps around (0.33, 0.67, 1.0) and 50% test accuracy just
+   means 1 of 2 images was correct. Use at least 50-100 images per
+   class for meaningful results.
+2. YOLO ERROR: caused by the missing "ultralytics" library (Block 20).
+3. YOLO DATA: needs bounding-box labels and a data.yaml file
+   (Block 22); class folders alone will not work.
+4. VARIABLE NAME: Part B originally reused the name "model", which
+   overwrote the Part A classifier. It is renamed "yolo_model" here.
+5. FINE-TUNING LINE: axvline(x=4) draws the line at epoch index 4;
+   x=4.5 would place it exactly between the two training phases.
+6. Results vary slightly from run to run because of random
+   augmentation and weight initialization.

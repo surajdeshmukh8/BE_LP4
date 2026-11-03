@@ -1,0 +1,345 @@
+=====================================================================
+PR NO. 5 (LP IV) - CONTINUOUS BAG OF WORDS (CBOW) MODEL
+Cleaned-up code with an explanation for every block
+=====================================================================
+
+AIM
+---
+Build a Continuous Bag of Words (CBOW) model that learns word
+embeddings by predicting a CENTRE word from the words around it
+(its context). Example: context ["love", "learning"] -> centre word
+is "deep" or "machine".
+
+OVERALL FLOW
+------------
+Prepare text -> Tokenize -> Generate (context, target) pairs
+-> Build CBOW model -> Compile -> Train -> Predict -> Inspect embeddings
+
+Each block below is marked "BLOCK n". The "WHAT / WHY" lines explain
+the block; the code that follows can be copied into a notebook cell
+or pasted into one Python script.
+
+KEY IDEA OF CBOW
+----------------
+  Skip-gram : centre word  -> predict the surrounding words
+  CBOW      : surrounding words -> predict the centre word
+In CBOW the embeddings of all context words are AVERAGED into one
+vector, and that vector is used to predict the centre word. Word order
+inside the window is ignored, hence "Bag of Words".
+
+
+=====================================================================
+BLOCK 1 - IMPORT LIBRARIES
+=====================================================================
+WHAT: Imports every library the experiment needs.
+WHY:
+  - numpy                  : array maths
+  - random                 : fixing the random seed
+  - tensorflow / keras     : building and training the model
+  - Tokenizer              : converts words to integer IDs
+  - Sequential             : layers stacked one after another
+  - Input                  : declares the input shape
+  - Embedding              : lookup table that turns a word ID into a
+                             dense vector (this is what CBOW learns)
+  - GlobalAveragePooling1D : averages the context word vectors
+  - Dense                  : fully connected output layer
+NOTE: The original used a Lambda layer for averaging. It works, but
+      Lambda layers can fail when saving/loading a model.
+      GlobalAveragePooling1D does exactly the same job
+      (mean over the context words) and is safer.
+
+CODE:
+import numpy as np
+import random
+import tensorflow as tf
+
+from tensorflow.keras import Input
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Embedding, GlobalAveragePooling1D, Dense
+from tensorflow.keras.preprocessing.text import Tokenizer
+
+# Fix random seeds so results are (mostly) reproducible
+np.random.seed(42)
+random.seed(42)
+tf.random.set_seed(42)
+
+
+=====================================================================
+BLOCK 2 - PREPARE THE TEXT (CORPUS)
+=====================================================================
+WHAT: Defines the training text and splits it into sentences.
+WHY: CBOW needs text to learn from. Our corpus is 4 tiny sentences.
+     We keep each sentence separate so that, later, a context window
+     never mixes words from two different sentences.
+NOTE: The original joined everything into one long sequence, so
+      windows such as ("learning", "machine") crossed a sentence
+      boundary ("... I love machine learning | I love deep ...").
+      Those pairs are meaningless, so we avoid them.
+
+CODE:
+text = """I love machine learning
+I love deep learning
+machine learning is interesting
+deep learning is powerful"""
+
+sentences = text.split("\n")
+print("Sentences:", sentences)
+
+
+=====================================================================
+BLOCK 3 - TOKENIZE (WORD -> INTEGER ID)
+=====================================================================
+WHAT: Builds the vocabulary and converts each sentence to a list of IDs.
+WHY:
+  - fit_on_texts       : learns the vocabulary (lower-cases the words,
+                         so "I" and "i" are the same word).
+  - texts_to_sequences : replaces every word by its integer ID.
+  - word_index         : dictionary {word: id}. IDs start at 1;
+                         ID 0 is reserved for padding.
+  - vocab_size = len(word_index) + 1 : the +1 accounts for the unused
+    ID 0, so the embedding table and output layer have enough rows.
+  - reverse_word       : {id: word}, used later to turn a predicted ID
+                         back into a readable word.
+
+CODE:
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(sentences)
+
+sequences = tokenizer.texts_to_sequences(sentences)
+word_index = tokenizer.word_index
+reverse_word = {v: k for k, v in word_index.items()}
+vocab_size = len(word_index) + 1
+
+print("Vocabulary:", word_index)
+print("Vocab size (incl. padding id 0):", vocab_size)
+print("Sequences :", sequences)
+
+
+=====================================================================
+BLOCK 4 - GENERATE TRAINING DATA (CONTEXT -> CENTRE WORD)
+=====================================================================
+WHAT: Slides a window over each sentence and creates
+      (context words, centre word) pairs.
+WHY:
+  - window = 1 means 1 word on the LEFT and 1 word on the RIGHT of the
+    centre word, so every input has 2 * window = 2 context words.
+  - Example: sentence "I love machine learning" -> IDs [i, love,
+    machine, learning]
+        centre "love"    : context = [i, machine]
+        centre "machine" : context = [love, learning]
+  - X = context IDs, shape (num_samples, 2 * window)
+  - y = centre word ID.
+NOTE: The original converted y to one-hot with to_categorical.
+      We keep y as plain integers and use sparse_categorical_crossentropy
+      later. It is the same result with less memory and less code.
+
+CODE:
+window = 1
+X, y = [], []
+
+for seq in sequences:
+    for i in range(window, len(seq) - window):
+        context = seq[i - window:i] + seq[i + 1:i + window + 1]
+        X.append(context)
+        y.append(seq[i])
+
+X = np.array(X)
+y = np.array(y)
+
+print("X (context IDs):\n", X)
+print("y (centre IDs) :", y)
+print("Samples:", len(X))
+
+
+=====================================================================
+BLOCK 5 - BUILD THE CBOW MODEL
+=====================================================================
+WHAT: Defines the network layer by layer.
+WHY, layer by layer:
+  Input(2 * window)         : each sample is 2 context word IDs.
+  Embedding(vocab_size, 10) : converts each ID into a 10-number vector.
+                              Output shape (batch, 2, 10). These vectors
+                              are the WORD EMBEDDINGS the model learns.
+  GlobalAveragePooling1D    : averages the 2 context vectors into one
+                              vector of 10 numbers -> shape (batch, 10).
+                              This is the "bag of words" step.
+  Dense(vocab_size, softmax): gives one probability per vocabulary word;
+                              the highest probability is the predicted
+                              centre word.
+
+CODE:
+embedding_dim = 10
+
+model = Sequential([
+    Input(shape=(2 * window,)),
+    Embedding(vocab_size, embedding_dim),
+    GlobalAveragePooling1D(),
+    Dense(vocab_size, activation="softmax"),
+])
+
+
+=====================================================================
+BLOCK 6 - COMPILE THE MODEL AND VIEW SUMMARY
+=====================================================================
+WHAT: Chooses the optimizer, loss function and metric, then prints
+      the architecture.
+WHY:
+  - optimizer adam                        : adaptive optimizer; works
+    well without much tuning.
+  - loss sparse_categorical_crossentropy  : multi-class loss when labels
+    are integers (original used categorical_crossentropy with one-hot).
+  - metrics accuracy                      : % of centre words predicted
+    correctly during training.
+  - model.summary()                       : shows layer shapes and the
+    number of parameters (Embedding = vocab_size x 10).
+
+CODE:
+model.compile(
+    optimizer="adam",
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"],
+)
+model.summary()
+
+
+=====================================================================
+BLOCK 7 - TRAIN THE MODEL
+=====================================================================
+WHAT: Trains the model for 200 epochs and prints the final result.
+WHY:
+  - epochs=200 : the dataset is tiny (only a few samples), so many
+    passes are needed for the embeddings to settle.
+  - verbose=0  : hides per-epoch output to keep the notebook clean.
+  - history    : stores per-epoch loss/accuracy so we can print the
+    final values.
+NOTE: With so little data there is no validation split. High accuracy
+      here only shows the model has memorised the corpus; it is a
+      demonstration, not a real benchmark.
+
+CODE:
+history = model.fit(X, y, epochs=200, verbose=0)
+
+print(f"Final training loss    : {history.history['loss'][-1]:.4f}")
+print(f"Final training accuracy: {history.history['accuracy'][-1]:.4f}")
+
+
+=====================================================================
+BLOCK 8 - HELPER FUNCTION TO PREDICT THE CENTRE WORD
+=====================================================================
+WHAT: Defines predict_word(), which takes context words and returns
+      the most likely centre words with their probabilities.
+WHY:
+  - Converts words to IDs, runs model.predict, and converts the best
+    IDs back to words.
+  - Returns the top-k answers instead of only the top-1, because
+    several answers can be valid (see Block 9).
+  - Checks that the words exist in the vocabulary and that the number
+    of context words equals 2 * window.
+  - ID 0 is skipped because it is padding, not a real word.
+
+CODE:
+def predict_word(context_words, top_k=3):
+    if len(context_words) != 2 * window:
+        raise ValueError(f"Give exactly {2 * window} context words.")
+    for w in context_words:
+        if w.lower() not in word_index:
+            raise ValueError(f"'{w}' is not in the vocabulary.")
+
+    ids = np.array([[word_index[w.lower()] for w in context_words]])
+    probs = model.predict(ids, verbose=0)[0]
+    best = np.argsort(probs)[::-1][:top_k]
+    return [(reverse_word[i], float(probs[i])) for i in best if i != 0]
+
+
+=====================================================================
+BLOCK 9 - PREDICT A CENTRE WORD
+=====================================================================
+WHAT: Predicts the missing word between "love" and "learning".
+WHY:
+  - Context ["love", "learning"] fits TWO training sentences:
+        "I love machine learning"
+        "I love deep learning"
+    so the correct answer is either "machine" or "deep", and the model
+    should give both a high, similar probability. Which one is listed
+    first can change from run to run; that is expected, not a bug.
+  - Showing the top-3 probabilities makes this visible. The original
+    printed only the single top word, which hid this ambiguity.
+
+CODE:
+context = ["love", "learning"]
+print("Context Words:", context)
+for word, p in predict_word(context):
+    print(f"  {word:<12} probability = {p:.3f}")
+
+print()
+context = ["deep", "is"]
+print("Context Words:", context)
+for word, p in predict_word(context):
+    print(f"  {word:<12} probability = {p:.3f}")
+# "deep ___ is" appears only as "deep learning is", so "learning"
+# should be predicted with a very high probability.
+
+
+=====================================================================
+BLOCK 10 - INSPECT THE LEARNED WORD EMBEDDINGS
+=====================================================================
+WHAT: Extracts the embedding matrix and compares word vectors using
+      cosine similarity.
+WHY:
+  - The real product of CBOW is the Embedding layer's weights: one
+    10-number vector per word.
+  - Cosine similarity (closer to 1 = more similar direction) shows
+    which words the model treats as similar. Words that appear in
+    similar contexts (e.g. "machine" and "deep", which both sit
+    between "love" and "learning") should end up with similar vectors.
+  - With a tiny corpus the numbers are only illustrative.
+
+CODE:
+embeddings = model.layers[0].get_weights()[0]   # shape (vocab_size, 10)
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+print("Embedding of 'learning':\n", embeddings[word_index["learning"]])
+
+pairs = [("machine", "deep"), ("machine", "interesting"), ("i", "love")]
+for w1, w2 in pairs:
+    sim = cosine_similarity(embeddings[word_index[w1]],
+                            embeddings[word_index[w2]])
+    print(f"Similarity({w1}, {w2}) = {sim:.3f}")
+
+
+=====================================================================
+BLOCK 11 - CONCLUSION
+=====================================================================
+WHAT: Prints a summary using the real computed values.
+WHY: A printed f-string always shows the current numbers instead of a
+     hard-coded comment that goes stale after retraining.
+
+CODE:
+print(f"The CBOW model (window={window}, embedding size={embedding_dim}) "
+      f"reached training accuracy = {history.history['accuracy'][-1]:.4f} "
+      f"on a vocabulary of {vocab_size - 1} words.")
+
+
+=====================================================================
+SUMMARY OF CHANGES FROM THE ORIGINAL NOTEBOOK
+=====================================================================
+1. Added random seeds for reproducibility.
+2. Tokenized sentence by sentence, so context windows no longer cross
+   sentence boundaries (the original produced pairs such as
+   [learning, learning] -> machine, which are not real contexts).
+3. Replaced the Lambda(reduce_mean) layer with GlobalAveragePooling1D
+   (same maths, safer to save/load).
+4. Used the Input(...) layer to declare the input shape explicitly.
+5. Kept labels as integers and used sparse_categorical_crossentropy
+   instead of one-hot encoding with to_categorical.
+6. Added predict_word() with input checks and top-3 probabilities
+   (the original showed one word only).
+7. Added an embedding inspection block with cosine similarity.
+8. Replaced hard-coded output with a printed result.
+
+NOTE: The original notebook predicted "deep" for ["love", "learning"].
+      "machine" is equally valid for that context, so either word may
+      come out on top; re-run this version to see the exact numbers.
+      Results vary slightly from run to run.
